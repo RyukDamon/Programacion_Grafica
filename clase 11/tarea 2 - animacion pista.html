@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title></title>
+<style>
+</style>
+</head>
+<body>
+<canvas id="canvas" width="500" height="500"></canvas>
+
+<script id="vs" type="x-shader/x-vertex">
+#version 300 es
+layout(location=0) in vec2 aPos;
+
+uniform mat4 uMatrizModelo;
+uniform mat4 uMatrizVista;
+uniform mat4 uMatrizProyeccion;
+
+void main() {
+    gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aPos,0,1);
+}
+</script>
+
+<script id="fs" type="x-shader/x-fragment">
+#version 300 es
+precision mediump float;
+
+uniform vec4 uColor;
+out vec4 fragColor;
+
+void main() { 
+    fragColor = uColor; 
+}
+</script>
+
+<script>
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl2');
+
+if(!gl) alert('WebGL2 no disponible');
+
+gl.viewport(0,0,canvas.width,canvas.height);
+gl.clearColor(1.0,0.65,0.0,1.0);
+
+const COLORES = {
+    ROJO: { r:255, g:0, b:0 },
+    NEGRO: { r:0, g:0, b:0 },
+    FONDO: { r:255, g:165, b:0 }
+};
+
+// ===== Shaders =====
+function crearShader(tipo, fuente) {
+    const shader = gl.createShader(tipo);
+    gl.shaderSource(shader, fuente);
+    gl.compileShader(shader);
+
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        return null;
+    }
+    return shader;
+}
+
+const vertexShader = crearShader(gl.VERTEX_SHADER, document.getElementById("vs").text.trim());
+const fragmentShader = crearShader(gl.FRAGMENT_SHADER, document.getElementById("fs").text.trim());
+
+const programa = gl.createProgram();
+gl.attachShader(programa, vertexShader);
+gl.attachShader(programa, fragmentShader);
+gl.linkProgram(programa);
+gl.useProgram(programa);
+
+// ===== Uniformes y atributos =====
+const uniformes = {
+    matrizModelo: gl.getUniformLocation(programa, "uMatrizModelo"),
+    matrizVista: gl.getUniformLocation(programa, "uMatrizVista"),
+    matrizProyeccion: gl.getUniformLocation(programa, "uMatrizProyeccion"),
+    color: gl.getUniformLocation(programa, "uColor")
+};
+
+const atributos = { posicion: 0 };
+
+// ===== Matrices =====
+function identidad() {
+    return new Float32Array([
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,0,1
+    ]);
+}
+
+function multiplicarMatrices(a, b) {
+    const r = new Float32Array(16);
+
+    for(let f=0; f<4; f++) {
+        for(let c=0; c<4; c++) {
+            r[f*4+c] = 0;
+            for(let k=0; k<4; k++) {
+                r[f*4+c] += a[f*4+k] * b[k*4+c];
+            }
+        }
+    }
+
+    return r;
+}
+
+let matrizModelo = identidad();
+
+function reiniciarTransformaciones() {
+    matrizModelo = identidad();
+}
+
+function traslacion(tx, ty, tz=0) {
+    matrizModelo = multiplicarMatrices(
+        matrizModelo,
+        new Float32Array([
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            tx,ty,tz,1
+        ])
+    );
+}
+
+function escalacion(sx, sy, sz=1) {
+    matrizModelo = multiplicarMatrices(
+        matrizModelo,
+        new Float32Array([
+            sx,0,0,0,
+            0,sy,0,0,
+            0,0,sz,0,
+            0,0,0,1
+        ])
+    );
+}
+
+// Figuras
+const figuras = {
+    negroGrande: {
+        vertices: [
+            -0.8, 0.8,
+             0.8, 0.8,
+             0.8,-0.8,
+            -0.8,-0.8
+        ],
+        relleno: true
+    },
+    naranjaInterior: {
+        vertices: [
+            -0.7, 0.7,
+             0.7, 0.7,
+             0.7,-0.7,
+            -0.7,-0.7
+        ],
+        relleno: true
+    },
+    bordeCentral: {
+        vertices: [
+            -0.75, 0.75,
+             0.75, 0.75,
+             0.75,-0.75,
+            -0.75,-0.75
+        ],
+        relleno: false
+    },
+    autoVertical: {
+        vertices: [
+            -0.05, 0.1,
+             0.05, 0.1,
+             0.05,-0.1,
+            -0.05,-0.1
+        ],
+        relleno: true
+    },
+    autoHorizontal: {
+        vertices: [
+            -0.1, 0.05,
+             0.1, 0.05,
+             0.1,-0.05,
+            -0.1,-0.05
+        ],
+        relleno: true
+    }
+};
+
+// Dibujar figuras
+function dibujarFigura(figura, color) {
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(figura.vertices), gl.STATIC_DRAW);
+
+    gl.enableVertexAttribArray(atributos.posicion);
+    gl.vertexAttribPointer(atributos.posicion, 2, gl.FLOAT, false, 0, 0);
+
+    gl.uniform4f(
+        uniformes.color,
+        color.r / 255,
+        color.g / 255,
+        color.b / 255,
+        1.0
+    );
+
+    gl.drawArrays(figura.relleno ? gl.TRIANGLE_FAN : gl.LINE_LOOP, 0, figura.vertices.length / 2);
+}
+
+// Configuración de matrices
+gl.uniformMatrix4fv(uniformes.matrizProyeccion, false, identidad());
+gl.uniformMatrix4fv(uniformes.matrizVista, false, identidad());
+
+// Animación
+let t = 0;
+
+function render() {
+
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // pista
+    reiniciarTransformaciones();
+    gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+    dibujarFigura(figuras.negroGrande, COLORES.NEGRO);
+    dibujarFigura(figuras.naranjaInterior, COLORES.FONDO);
+    dibujarFigura(figuras.bordeCentral, COLORES.NEGRO);
+
+    // movimiento del auto
+    reiniciarTransformaciones();
+
+    let lado = Math.floor(t / 200) % 4;
+    let pos = (t % 200) / 200;
+    let x = 0, y = 0, estado = 1;
+
+    if(lado === 0) {
+        // horizontal derecha
+        x = -0.75 + 1.5 * pos;
+        y = 0.75;
+        estado = 2;
+    }
+
+    if(lado === 1) {
+        // vertical abajo
+        x = 0.75;
+        y = 0.75 - 1.5 * pos;
+        estado = 1;
+    }
+
+    if(lado === 2) {
+        // horizontal izquierda
+        x = 0.75 - 1.5 * pos;
+        y = -0.75;
+        estado = 2;
+    }
+
+    if(lado === 3) {
+        // vertical arriba
+        x = -0.75;
+        y = -0.75 + 1.5 * pos;
+        estado = 1;
+    }
+
+    traslacion(x, y);
+    gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+
+    // dibujar auto según estado
+    if(estado === 1) dibujarFigura(figuras.autoVertical, COLORES.ROJO);
+    if(estado === 2) dibujarFigura(figuras.autoHorizontal, COLORES.ROJO);
+
+    t++;
+    requestAnimationFrame(render);
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!DOCTYPE html> 
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title></title>
+</head>
+<body>
+    <canvas id="canvas" width="500" height="500"></canvas>
+
+    <!-- Vertex Shader -->
+    <script id="vs" type="x-shader/x-vertex">
+        #version 300 es
+        layout(location=0) in vec2 aPos;
+        
+        uniform mat4 uMatrizModelo;
+        uniform mat4 uMatrizVista;
+        uniform mat4 uMatrizProyeccion;
+        
+        void main() {
+            gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aPos, 0, 1);
+        }
+    </script>
+
+    <!-- Fragment Shader -->
+    <script id="fs" type="x-shader/x-fragment">
+        #version 300 es
+        precision mediump float;
+        
+        uniform vec4 uColor;
+        out vec4 fragColor;
+        
+        void main() {
+            fragColor = uColor;
+        }
+    </script>
+
+    <script>
+        // canvas y contexto
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl2');
+        if (!gl) alert('WebGL2 no disponible');
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // colores
+        const COLORES = {
+            ROJO:     { r: 255, g: 0,   b: 0   },
+            VERDE:    { r: 0,   g: 255, b: 0   },
+            AZUL:     { r: 0,   g: 0,   b: 255 },
+            AMARILLO: { r: 255, g: 255, b: 0   },
+            MAGENTA:  { r: 255, g: 0,   b: 255 },
+            CYAN:     { r: 0,   g: 255, b: 255 },
+            BLANCO:   { r: 255, g: 255, b: 255 },
+            NEGRO:    { r: 0,   g: 0,   b: 0   },
+            NARANJA:  { r: 255, g: 165, b: 0   },
+            MORADO:   { r: 128, g: 0,   b: 128 }
+        };
+
+        // shaders
+        function crearShader(tipo, fuente) {
+            const shader = gl.createShader(tipo);
+            gl.shaderSource(shader, fuente);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = crearShader(gl.VERTEX_SHADER, document.getElementById("vs").text.trim());
+        const fragmentShader = crearShader(gl.FRAGMENT_SHADER, document.getElementById("fs").text.trim());
+
+        const programa = gl.createProgram();
+        gl.attachShader(programa, vertexShader);
+        gl.attachShader(programa, fragmentShader);
+        gl.linkProgram(programa);
+        gl.useProgram(programa);
+
+        // ubicaciones
+        const uniformes = {
+            matrizModelo: gl.getUniformLocation(programa, "uMatrizModelo"),
+            matrizVista: gl.getUniformLocation(programa, "uMatrizVista"),
+            matrizProyeccion: gl.getUniformLocation(programa, "uMatrizProyeccion"),
+            color: gl.getUniformLocation(programa, "uColor")
+        };
+        const atributos = { posicion: 0 };
+
+        // matrices
+        function identidad() {
+            return new Float32Array([
+                1,0,0,0,
+                0,1,0,0,
+                0,0,1,0,
+                0,0,0,1
+            ]);
+        }
+        function multiplicarMatrices(a, b) {
+            const r = new Float32Array(16);
+            for (let f=0; f<4; f++) {
+                for (let c=0; c<4; c++) {
+                    r[f*4+c] = 0;
+                    for (let k=0; k<4; k++) {
+                        r[f*4+c] += a[f*4+k] * b[k*4+c];
+                    }
+                }
+            }
+            return r;
+        }
+
+        let matrizModelo = identidad();
+        function reiniciarTransformaciones() { matrizModelo = identidad(); }
+        function traslacion(tx, ty, tz=0) {
+            const m = new Float32Array([
+                1,0,0,0,
+                0,1,0,0,
+                0,0,1,0,
+                tx,ty,tz,1
+            ]);
+            matrizModelo = multiplicarMatrices(matrizModelo, m);
+        }
+        function escalacion(sx, sy, sz=1) {
+            const m = new Float32Array([
+                sx,0,0,0,
+                0,sy,0,0,
+                0,0,sz,0,
+                0,0,0,1
+            ]);
+            matrizModelo = multiplicarMatrices(matrizModelo, m);
+        }
+        function rotacionZ(angulo) {
+            const r = angulo * Math.PI / 180;
+            const c = Math.cos(r), s = Math.sin(r);
+            const m = new Float32Array([
+                c,s,0,0,
+                -s,c,0,0,
+                0,0,1,0,
+                0,0,0,1
+            ]);
+            matrizModelo = multiplicarMatrices(matrizModelo, m);
+        }
+
+        // figura base
+        let figuras = {
+            triangulo: {
+                vertices: {
+                    p1: { x: 0.0,  y: 0.15 },
+                    p2: { x: 0.18, y: -0.15 },
+                    p3: { x: -0.18, y: -0.15 }
+                },
+                relleno: true
+            }
+        };
+
+        // dibuja triángulo
+        function dibujarTriangulo(figura, color) {
+            const vertices = [
+                figura.vertices.p1.x, figura.vertices.p1.y,
+                figura.vertices.p2.x, figura.vertices.p2.y,
+                figura.vertices.p3.x, figura.vertices.p3.y
+            ];
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(atributos.posicion);
+            gl.vertexAttribPointer(atributos.posicion, 2, gl.FLOAT, false, 0, 0);
+            gl.uniform4f(uniformes.color, color.r/255, color.g/255, color.b/255, 1.0);
+            gl.drawArrays(figura.relleno ? gl.TRIANGLES : gl.LINE_LOOP, 0, 3);
+        }
+
+        // matrices base
+        gl.uniformMatrix4fv(uniformes.matrizProyeccion, false, identidad());
+        gl.uniformMatrix4fv(uniformes.matrizVista, false, identidad());
+
+        // render
+        function render() {
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            // verde arriba izq
+            reiniciarTransformaciones();
+            traslacion(-0.4, 0.2, 0);
+            escalacion(1.0, 1.5);
+            gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+            dibujarTriangulo(figuras.triangulo, COLORES.VERDE);
+
+            // verde arriba der
+            reiniciarTransformaciones();
+            traslacion(0.4, 0.2, 0);
+            escalacion(1.0, 0.8);
+            gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+            dibujarTriangulo(figuras.triangulo, COLORES.VERDE);
+
+            // rojo abajo izq
+            reiniciarTransformaciones();
+            traslacion(-0.4, -0.4, 0);
+            escalacion(1.0, 0.8);
+            gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+            dibujarTriangulo(figuras.triangulo, COLORES.ROJO);
+
+            // rojo de cabeza
+            reiniciarTransformaciones();
+            traslacion(-0.4, 0.4, 0);
+            escalacion(1.0, 0.8);
+            rotacionZ(180);
+            gl.uniformMatrix4fv(uniformes.matrizModelo, false, matrizModelo);
+            dibujarTriangulo(figuras.triangulo, COLORES.ROJO);
+        }
+
+        render();
+    </script>
+</body>
+</html>
