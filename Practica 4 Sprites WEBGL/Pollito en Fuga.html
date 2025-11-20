@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <title>Practica 3</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <style>
+    body {
+      background-color: black;
+      color: rgb(153, 206, 219);
+      font-family: Arial, sans-serif;
+      font-size: 32px;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px #37f311;
+    }
+  </style>
+</head>
+<body>
+  <h2>Pollito en fuga</h2>
+  <canvas id="webglcanvas" width="500" height="500"></canvas>
+  <p>Nivel: <span id="puntos">1</span></p>
+
+  <!-- Imágenes ocultas para los 5 tipos de autos -->
+  <img src="imagenes/pollo.png" id="imgRana" hidden>
+  <img src="imagenes/fondo.png" id="imgFondo" hidden>
+  <img src="imagenes/auto1izq.png" id="imgAuto1Izq" hidden>
+  <img src="imagenes/auto1der.png" id="imgAuto1Der" hidden>
+  <img src="imagenes/auto2izq.png" id="imgAuto2Izq" hidden>
+  <img src="imagenes/auto2der.png" id="imgAuto2Der" hidden>
+  <img src="imagenes/auto3izq.png" id="imgAuto3Izq" hidden>
+  <img src="imagenes/auto3der.png" id="imgAuto3Der" hidden>
+  <img src="imagenes/auto4izq.png" id="imgAuto4Izq" hidden>
+  <img src="imagenes/auto4der.png" id="imgAuto4Der" hidden>
+  <img src="imagenes/auto5izq.png" id="imgAuto5Izq" hidden>
+  <img src="imagenes/auto5der.png" id="imgAuto5Der" hidden>
+
+  <script id="vs" type="vertex">
+    #version 300 es
+    uniform vec2 uDesplaza;
+    uniform mat4 uMatrizProyeccion;
+    layout(location = 0) in vec2 aVertices;
+    layout(location = 1) in vec2 aCoordenadasDeTextura;
+    out vec2 vCoordenadasDeTextura;
+    void main() {
+      vec2 vertices = aVertices + uDesplaza;
+      vCoordenadasDeTextura = aCoordenadasDeTextura;
+      gl_Position = uMatrizProyeccion * vec4(vertices, 0.0, 1.0);
+    }
+  </script>
+  <script id="fs" type="fragment">
+    #version 300 es
+    precision mediump float;
+    uniform sampler2D uTextura;
+    in vec2 vCoordenadasDeTextura;
+    out vec4 color;
+    void main() {
+      color = texture(uTextura, vCoordenadasDeTextura);
+    }
+  </script>
+  <script>
+    // -----
+    function ortho(r, izq, der, abj, arr, cerca, lejos) {
+      r[0]  = 2 / (der - izq); r[4]  = 0;               r[8]  = 0;                  r[12] = -(der + izq) / (der - izq);
+      r[1]  = 0;               r[5]  = 2 / (arr - abj); r[9]  = 0;                  r[13] = -(arr + abj) / (arr - abj);
+      r[2]  = 0;               r[6]  = 0;               r[10] = -2 / (lejos - cerca); r[14] = -(lejos + cerca) / (lejos - cerca);
+      r[3]  = 0;               r[7]  = 0;               r[11] = 0;                  r[15] = 1;
+    }
+    function leeLaTextura(gl, id) {
+      let codigo = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, codigo);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      let img = document.getElementById(id);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      return codigo;
+    }
+    // Config principales
+    const AUTO_SIZE = {
+      1: {ancho: 1.2, alto: 0.7},  // compacto
+      2: {ancho: 3.8, alto: 0.9},  // bus
+      3: {ancho: 2.2, alto: 0.7},  // blanco
+      4: {ancho: 2.0, alto: 0.9},  // policia
+      5: {ancho: 2.2, alto: 0.7}   // rojo
+    };
+    const RANA_ANCHO = 0.5, RANA_ALTO = 0.5;
+
+    // -----
+    let MatrizProyeccion = new Array(16);
+    let uMatrizProyeccion, uDesplaza, uTextura;
+    let sapoVAO, fondoVAO, autoVAO, autoPosBuffer, autoCoordBuffer;
+    let canvas, gl;
+    let puntuacion = 1;
+    let velocidadBase = 0.03;
+    let texturaRana, texturaFondo;
+    let texturasAutos = {};
+    let programa;
+    
+    // --- RANA con movimiento lateral
+    const sapo = {
+      x: -0.25, 
+      y: -4.6, 
+      ancho: RANA_ANCHO, 
+      alto: RANA_ALTO, 
+      saltando: false,
+      moviendoLateral: false,
+      saltoObjetivo: -4.6,
+      movimientoObjetivoX: -0.25,
+      velocidadSalto: 0.15,
+      velocidadLateral: 0.12,
+      
+      reset() { 
+        this.x = -0.25; 
+        this.y = -4.6; 
+        this.saltando = false;
+        this.moviendoLateral = false;
+        this.saltoObjetivo = -4.6;
+        this.movimientoObjetivoX = -0.25;
+      },
+      
+      saltar() {
+        if (!this.saltando && !this.moviendoLateral) {
+          this.saltoObjetivo = this.y + 1; 
+          this.saltando = true;
+        }
+      },
+
+      moverIzquierda() {
+        if (!this.saltando && !this.moviendoLateral) {
+          let nuevoX = this.x - 1;
+          if (nuevoX >= -5) {
+            this.movimientoObjetivoX = nuevoX;
+            this.moviendoLateral = true;
+          }
+        }
+      },
+
+      moverDerecha() {
+        if (!this.saltando && !this.moviendoLateral) {
+          let nuevoX = this.x + 1;
+          if (nuevoX + this.ancho <= 5) {
+            this.movimientoObjetivoX = nuevoX;
+            this.moviendoLateral = true;
+          }
+        }
+      },
+      
+      actualizar() {
+        // Actualizar salto vertical
+        if (this.saltando) {
+          if (this.y < this.saltoObjetivo) {
+            this.y += this.velocidadSalto;
+            if (this.y >= this.saltoObjetivo) { 
+              this.y = this.saltoObjetivo; 
+              this.saltando = false;
+              
+              // Verificar victoria al completar el salto
+              if (this.y >= 5.4) {
+                puntuacion++; 
+                document.getElementById('puntos').textContent = puntuacion;
+                velocidadBase *= 1.15;
+                this.reset();
+              }
+            }
+          }
+        }
+
+        // Actualizar movimiento lateral
+        if (this.moviendoLateral) {
+          let diferencia = this.movimientoObjetivoX - this.x;
+          if (Math.abs(diferencia) > 0.01) {
+            if (diferencia > 0) {
+              this.x += this.velocidadLateral;
+              if (this.x > this.movimientoObjetivoX) this.x = this.movimientoObjetivoX;
+            } else {
+              this.x -= this.velocidadLateral;
+              if (this.x < this.movimientoObjetivoX) this.x = this.movimientoObjetivoX;
+            }
+          } else {
+            this.x = this.movimientoObjetivoX;
+            this.moviendoLateral = false;
+          }
+        }
+      }
+    };
+    
+    let autos = [];
+    let tiempoTranscurrido = 0;
+    
+    function crearAutos() {
+      autos = [];
+
+      const v1 = velocidadBase;
+      const v2 = velocidadBase * 1.1;
+      const v3 = velocidadBase * 1.2;
+      const v4 = velocidadBase * 0.9;
+      const v5 = velocidadBase * 1.3;
+      const espacio = 1.2;  // Espaciado entre autos (ajusta aquí)
+
+      // FILA 1 (derecha) - tipos únicos
+      let fila1 = [1, 3, 2, 4];
+      let off = 0;
+      fila1.forEach(tipo => {
+        autos.push({tipo:tipo, sentido:'der', offset: off,     y:-3.75, velocidad:v1});
+        off += AUTO_SIZE[tipo].ancho + espacio;
+      });
+
+      // FILA 2 (izquierda) - tipos únicos
+      let fila2 = [4, 2, 3, 1];
+      off = 0;
+      fila2.forEach(tipo => {
+        autos.push({tipo:tipo, sentido:'izq', offset: off,     y:-1.75, velocidad:-v2});
+        off += AUTO_SIZE[tipo].ancho + espacio;
+      });
+
+      // FILA 3 (derecha) - tipos únicos
+      let fila3 = [5, 1, 2, 4];
+      off = 0;
+      fila3.forEach(tipo => {
+        autos.push({tipo:tipo, sentido:'der', offset: off,     y:0.25, velocidad:v3});
+        off += AUTO_SIZE[tipo].ancho + espacio;
+      });
+
+      // FILA 4 (izquierda) - tipos únicos
+      let fila4 = [2, 5, 4, 1];
+      off = 0;
+      fila4.forEach(tipo => {
+        autos.push({tipo:tipo, sentido:'izq', offset: off,     y:2.25, velocidad:-v4});
+        off += AUTO_SIZE[tipo].ancho + espacio;
+      });
+
+      // FILA 5 (derecha) - tipos únicos
+      let fila5 = [5, 4, 1, 3];
+      off = 0;
+      fila5.forEach(tipo => {
+        autos.push({tipo:tipo, sentido:'der', offset: off,     y:4.25, velocidad:v5});
+        off += AUTO_SIZE[tipo].ancho + espacio;
+      });
+    }
+  
+    function actualizarAutos() {
+      tiempoTranscurrido += 1;
+      const ciclo = 14;
+      
+      autos.forEach(auto => {
+        let as = AUTO_SIZE[auto.tipo];
+        auto.ancho = as.ancho; 
+        auto.alto = as.alto;
+        
+        if (auto.velocidad > 0) {
+          let posicion = (auto.offset + auto.velocidad * tiempoTranscurrido) % ciclo;
+          auto.x = -6 + posicion;
+        } else {
+          let posicion = (auto.offset + Math.abs(auto.velocidad) * tiempoTranscurrido) % ciclo;
+          auto.x = 6 - posicion - auto.ancho;
+        }
+      });
+    }
+    
+    function colisionSapoAuto() {
+      const margen = 0.1;
+      
+      for (let auto of autos) {
+        if (sapo.x + margen < auto.x + auto.ancho && 
+            sapo.x + sapo.ancho - margen > auto.x &&
+            sapo.y + margen < auto.y + auto.alto && 
+            sapo.y + sapo.alto - margen > auto.y) {
+          return true;
+        }
+      }
+      return false;
+    }
+    
+    function dentroSapo(x, y) {
+      return x >= sapo.x && x <= sapo.x + sapo.ancho && 
+             y >= sapo.y && y <= sapo.y + sapo.alto;
+    }
+    
+    function dibujaFondo() {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texturaFondo);
+      gl.uniform1i(uTextura, 0);
+      gl.bindVertexArray(fondoVAO);
+      gl.uniform2f(uDesplaza, -5, -5);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+      gl.bindVertexArray(null);
+    }
+    
+    function dibujaAutos() {
+      autos.forEach(auto => {
+        gl.activeTexture(gl.TEXTURE0);
+        let key = `auto${auto.tipo}${auto.sentido}`;
+        gl.bindTexture(gl.TEXTURE_2D, texturasAutos[key]);
+        gl.uniform1i(uTextura, 0);
+        
+        let vertices = [0, 0, auto.ancho, 0, auto.ancho, auto.alto, 0, auto.alto];
+        gl.bindVertexArray(autoVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, autoPosBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STREAM_DRAW);
+        gl.uniform2f(uDesplaza, auto.x, auto.y);
+        gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+      });
+      gl.bindVertexArray(null);
+    }
+    
+    function dibujaRana() {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texturaRana);
+      gl.uniform1i(uTextura, 0);
+      gl.bindVertexArray(sapoVAO);
+      gl.uniform2f(uDesplaza, sapo.x, sapo.y);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+      gl.bindVertexArray(null);
+    }
+    
+    function dibuja() {
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      
+      sapo.actualizar();
+      actualizarAutos();
+      
+      if (colisionSapoAuto()) {
+        alert("¡Fin del juego! Llegaste al Nivel " + puntuacion);
+        puntuacion = 1; 
+        velocidadBase = 0.03;
+        document.getElementById('puntos').textContent = puntuacion;
+        sapo.reset(); 
+        tiempoTranscurrido = 0;
+        crearAutos();
+      }
+      
+      dibujaFondo();
+      dibujaAutos();
+      dibujaRana();
+      
+      requestAnimationFrame(dibuja);
+    }
+    
+    function main() {
+      canvas = document.getElementById("webglcanvas");
+      gl = canvas.getContext("webgl2");
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+      let vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, document.getElementById("vs").text.trim());
+      gl.compileShader(vs);
+      let fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, document.getElementById("fs").text.trim());
+      gl.compileShader(fs);
+      programa = gl.createProgram();
+      gl.attachShader(programa, vs); 
+      gl.attachShader(programa, fs);
+      gl.linkProgram(programa);
+      gl.useProgram(programa);
+
+      // VAO y buffer para auto
+      autoVAO = gl.createVertexArray();
+      gl.bindVertexArray(autoVAO);
+      autoPosBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, autoPosBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0,1,0,1,1,0,1]), gl.STREAM_DRAW);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(0);
+      autoCoordBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, autoCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(1);
+      gl.bindVertexArray(null);
+
+      // VAO rana
+      let verticesSapo = [0, 0, RANA_ANCHO, 0, RANA_ANCHO, RANA_ALTO, 0, RANA_ALTO];
+      let coordsSapo   = [0, 0, 1, 0, 1, 1, 0, 1];
+      sapoVAO = gl.createVertexArray();
+      gl.bindVertexArray(sapoVAO);
+      let bufferSapo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufferSapo);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verticesSapo), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(0);
+      let bufferSapoCoords = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufferSapoCoords);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coordsSapo), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(1);
+      gl.bindVertexArray(null);
+
+      // Fondo
+      let verticesFondo = [0, 0, 10, 0, 10, 10, 0, 10];
+      let coordsFondo = [0, 0, 1, 0, 1, 1, 0, 1];
+      fondoVAO = gl.createVertexArray(); 
+      gl.bindVertexArray(fondoVAO);
+      let bufferFondo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufferFondo);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verticesFondo), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(0);
+      let bufferFondoCoords = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufferFondoCoords);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coordsFondo), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 0, 0); 
+      gl.enableVertexAttribArray(1);
+      gl.bindVertexArray(null);
+
+      uMatrizProyeccion = gl.getUniformLocation(programa, "uMatrizProyeccion");
+      uDesplaza = gl.getUniformLocation(programa, "uDesplaza");
+      uTextura  = gl.getUniformLocation(programa, "uTextura");
+      ortho(MatrizProyeccion, -5, 5, -5, 5, -1, 1);
+      gl.uniformMatrix4fv(uMatrizProyeccion, false, MatrizProyeccion);
+      gl.clearColor(0, 0, 0, 1);
+
+      for(let i=1; i<=5; i++) {
+        texturasAutos[`auto${i}izq`] = leeLaTextura(gl, `imgAuto${i}Izq`);
+        texturasAutos[`auto${i}der`] = leeLaTextura(gl, `imgAuto${i}Der`);
+      }
+      texturaRana = leeLaTextura(gl, "imgRana");
+      texturaFondo = leeLaTextura(gl, "imgFondo");
+      
+      crearAutos();
+      
+      canvas.addEventListener('click', e => {
+        const rect = canvas.getBoundingClientRect();
+        const xCanvas = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const yCanvas = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+        const xMundo = xCanvas * 5;
+        const yMundo = yCanvas * 5;
+        if (dentroSapo(xMundo, yMundo)) sapo.saltar();
+      });
+      
+      document.addEventListener('keydown', e => {
+        if (e.code === 'Space' || e.key === ' ' || e.code === 'ArrowUp') { 
+          e.preventDefault(); 
+          sapo.saltar(); 
+        } else if (e.code === 'ArrowLeft') {
+          e.preventDefault();
+          sapo.moverIzquierda();
+        } else if (e.code === 'ArrowRight') {
+          e.preventDefault();
+          sapo.moverDerecha();
+        }
+      });
+      
+      dibuja();
+    }
+    
+    window.onload = main;
+  </script>
+</body>
+</html>
