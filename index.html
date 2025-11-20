@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Explorador GitHub</title>
+</head>
+<body>
+    <h1>Explorador de archivos</h1>
+    <div id="files"></div>
+    
+    <script>
+    // ============================================
+    // CONFIGURACION - CAMBIA ESTOS VALORES
+    // ============================================
+    const user = 'Ryukdamon';                  	// Tu usuario de GitHub
+    const repo = 'Programacion_Grafica';  		// Nombre de tu repositorio
+    const branch = 'main';                      // Rama (main o master)
+    
+    // URL donde se publican tus archivos (GitHub Pages)
+    const baseUrl = `https://${user}.github.io/${repo}/`;
+    
+    // ============================================
+    // CODIGO FUNCIONAL
+    // ============================================
+    
+    // Funcion para cargar archivos y carpetas
+    async function cargar(ruta = '') {
+        // API de GitHub para obtener contenido
+        const url = `https://api.github.com/repos/${user}/${repo}/contents/${ruta}?ref=${branch}`;
+        const res = await fetch(url);
+        const items = await res.json();
+        
+        // Crear lista HTML
+        const ul = document.createElement('ul');
+        
+        // Recorrer cada elemento
+        items.forEach(item => {
+            const li = document.createElement('li');
+            
+            if (item.type === 'dir') {
+                // CARPETA: mostrar nombre y cargar contenido dentro
+                li.innerHTML = `📁 ${item.name}`;
+                const sub = document.createElement('div');
+                li.appendChild(sub);
+                cargar(item.path).then(subUl => sub.appendChild(subUl));
+            } else {
+                // ARCHIVO: crear enlace directo
+                li.innerHTML = `<a href="${baseUrl}${item.path}" target="_blank">📄 ${item.name}</a>`;
+            }
+            
+            ul.appendChild(li);
+        });
+        
+        return ul;
+    }
+    
+    // Iniciar cargando la raíz del repositorio
+    cargar().then(ul => document.getElementById('files').appendChild(ul));
+    </script>
+</body>
+</html>
